@@ -5,7 +5,7 @@
 기본 실행 명령
 
 ```
-python train.py --num_epochs 100 --num_workers 16 --batch_size 8 --lr 0.0001 --model_name hybrid --train_folder_path ./data/TrainDataset --test_folder_path ./data/TestDataset
+python train.py --num_epochs 1 --num_workers 16 --batch_size 8 --learning_rate 0.0001 --model hybrid --train_folder_path ./data/TrainDataset --test_folder_path ./data/TestDataset
 
 ```
 
