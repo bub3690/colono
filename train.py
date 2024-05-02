@@ -104,6 +104,7 @@ def main(config):
     plt.show()
     # save fig
     plt.savefig('./results/sample.png')
+    plt.close()
     ###########
 
 
@@ -126,7 +127,7 @@ def main(config):
     plt.savefig('./results/loss.png')
 
     # 5. eval
-    testset_list = ["In","CVC-300", "CVC-ClinicDB","ETIS-LaribPolypDB","Kvasir"]
+    testset_list = ["In","CVC-300", "CVC-ClinicDB","CVC-ColonDB","ETIS-LaribPolypDB","Kvasir"]
     
     for testset in testset_list:
         print("----")
@@ -134,6 +135,7 @@ def main(config):
         test_folder_path = f"{config.test_folder_path}/{testset}"
         
         if testset == "In":
+            #  Trainset 포함.
             pass
         else:
             test_img_path = os.path.join(test_folder_path, 'images') + '/*.png'
