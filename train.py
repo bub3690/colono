@@ -129,6 +129,9 @@ def main(config):
     # 5. eval
     testset_list = ["In","CVC-300", "CVC-ClinicDB","CVC-ColonDB","ETIS-LaribPolypDB","Kvasir"]
     
+    #testset pandas. 각행은 testset 명
+    testset_df = pd.DataFrame(columns=["testset","loss","dice","iou","wfm","sm","ber","em","mae","acc"])
+    
     for testset in testset_list:
         print("----")
         print(testset)
@@ -149,7 +152,31 @@ def main(config):
         len_testset = len(test_mask_list)
         print("testset length : ", len_testset)
         
-        test(model, test_loader, len_testset)
+        
+        metric_test_loss, metric_dice, metric_iou, metric_wfm, \
+        metric_sm, metric_ber, metric_em,\
+        metric_mae, metric_acc = test(model, test_loader, len_testset)
+        
+        # metric 저장
+        new_row = pd.DataFrame({
+            "testset": [testset],
+            "loss": [metric_test_loss],
+            "dice": [metric_dice],
+            "iou": [metric_iou],
+            "wfm": [metric_wfm],
+            "sm": [metric_sm],
+            "ber": [metric_ber],
+            "em": [metric_em],
+            "mae": [metric_mae],
+            "acc": [metric_acc]
+        })
+
+        # DataFrame에 새로운 행 추가
+        testset_df = pd.concat([testset_df, new_row], ignore_index=True)
+    
+    # save
+    testset_df.to_csv(f'./results/{config.model}_{config.num_epochs}.csv', index=False)
+        
     
     return
 

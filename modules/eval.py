@@ -84,6 +84,8 @@ def test(model, test_loader,len_dataset):
     print(f"Accuracy: {cal_acc_.show()}")
     print("----")
         
-    #return test_loss, dice_score, iou_score, f_e_score, mae_score , structure_measure_iist, weighted_dice
+    return np.mean(test_loss), cal_dice_.show(), cal_iou_.show(), \
+        cal_wfm_.show(), cal_sm_.show() , cal_ber_.show(), cal_em_.show(),\
+        cal_mae_.show(), cal_acc_.show()
 
 
