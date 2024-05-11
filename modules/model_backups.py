@@ -1043,3 +1043,63 @@ class Hybrid(nn.Module):
         out = self.result(dec1_1)
         
         return out 
+    
+    
+
+class LinearSRA(nn.Module):
+    def __init__(self, cnn_channels,trans_channels, pooling_size=7, heads=8):
+        super(LinearSRA, self).__init__()
+        self.pooling_size = pooling_size
+        self.heads = heads
+        
+        self.cnn_channels = cnn_channels
+        
+        self.channels = trans_channels
+        
+        # MultiheadAttention 요구 사항에 맞춰 feature 크기 조정
+        self.attention = nn.MultiheadAttention(self.channels, heads)
+        
+        # Linear layers to transform the input features into query, key, and value
+        # 여기서 채널 다운 발생.
+        self.to_query = nn.Linear(self.cnn_channels, self.channels)
+        self.to_key = nn.Linear(self.cnn_channels, self.channels)
+        
+        self.to_value = nn.Linear(self.channels, self.channels)
+        
+        #up channel for cnn channel
+        self.up_cnn = nn.Linear(self.channels, self.cnn_channels)
+
+    def forward(self, x_cnn, x_trans):
+        # cnn은 linear layer로 channel이 줄여진다.
+        # x: 입력 피처 맵 (batch_size, channels, height, width)
+        
+        # 평균 풀링을 사용하여 공간 차원 축소
+        x_cnn_pooled = F.adaptive_avg_pool2d(x_cnn, (self.pooling_size, self.pooling_size))
+        x_trans_pooled = F.adaptive_avg_pool2d(x_trans, (self.pooling_size, self.pooling_size))
+        
+        # (batch_size, channels, pooling_size, pooling_size) -> (batch_size, pooling_size*pooling_size, channels)
+        x_cnn_pooled = x_cnn_pooled.view(x_cnn_pooled.size(0), self.cnn_channels, -1).permute(0, 2, 1)
+        x_trans_pooled = x_trans_pooled.view(x_trans_pooled.size(0), self.channels, -1).permute(0, 2, 1)
+        
+        # Query, Key, Value 생성
+        query = self.to_query(x_cnn_pooled)
+        key = self.to_key(x_cnn_pooled)
+        value = self.to_value(x_trans_pooled)
+        
+        # Attention 연산 수행
+        attn_output, _ = self.attention(query, key, value)
+        cnn_result = self.up_cnn(attn_output)
+
+        
+        
+        cnn_result = cnn_result.permute(0, 2, 1).view(x_cnn.size(0), self.cnn_channels, self.pooling_size, self.pooling_size)
+
+        #upsample
+        cnn_result = F.interpolate(cnn_result, size=(x_cnn.size(2),x_cnn.size(3)), mode='bilinear', align_corners=True)
+        transform_result = attn_output.permute(0, 2, 1).view(x_trans.size(0), self.channels, self.pooling_size, self.pooling_size)
+        transform_result = F.interpolate(transform_result, size=(x_trans.size(2), x_trans.size(3)), mode='bilinear', align_corners=True)
+        
+        return cnn_result, transform_result
+
+
+

@@ -169,6 +169,7 @@ class MMTM(nn.Module):
 
         return visual * vis_out, skeleton * sk_out
 
+
 class SA(nn.Module):
     def __init__(self, dim_feature):
         super(SA, self).__init__()
@@ -273,6 +274,10 @@ class LinearSRA(nn.Module):
         
         #up channel for cnn channel
         self.up_cnn = nn.Linear(self.channels, self.cnn_channels)
+        
+        # sigomoid
+        self.sigmoid = nn.Sigmoid()
+        
 
     def forward(self, x_cnn, x_trans):
         # cnn은 linear layer로 channel이 줄여진다.
@@ -303,6 +308,71 @@ class LinearSRA(nn.Module):
         cnn_result = F.interpolate(cnn_result, size=(x_cnn.size(2),x_cnn.size(3)), mode='bilinear', align_corners=True)
         transform_result = attn_output.permute(0, 2, 1).view(x_trans.size(0), self.channels, self.pooling_size, self.pooling_size)
         transform_result = F.interpolate(transform_result, size=(x_trans.size(2), x_trans.size(3)), mode='bilinear', align_corners=True)
+        
+        cnn_result = self.sigmoid(cnn_result)
+        transform_result = self.sigmoid(transform_result)
+        
+        return cnn_result, transform_result
+
+
+class LinearSRA_channel(nn.Module):
+    def __init__(self, cnn_channels,trans_channels, pooling_size=1, heads=8):
+        super(LinearSRA_channel, self).__init__()
+        self.pooling_size = pooling_size
+        self.heads = heads
+        
+        self.cnn_channels = cnn_channels
+        
+        self.channels = trans_channels
+        
+        # MultiheadAttention 요구 사항에 맞춰 feature 크기 조정
+        self.attention = nn.MultiheadAttention(self.channels, heads)
+        
+        # Linear layers to transform the input features into query, key, and value
+        # 여기서 채널 다운 발생.
+        self.to_query = nn.Linear(self.cnn_channels, self.channels)
+        self.to_key = nn.Linear(self.cnn_channels, self.channels)
+        
+        self.to_value = nn.Linear(self.channels, self.channels)
+        
+        #up channel for cnn channel
+        self.up_cnn = nn.Linear(self.channels, self.cnn_channels)
+        
+        # sigomoid
+        self.sigmoid = nn.Sigmoid()
+        
+
+    def forward(self, x_cnn, x_trans):
+        # cnn은 linear layer로 channel이 줄여진다.
+        # x: 입력 피처 맵 (batch_size, channels, height, width)
+        
+        # 평균 풀링을 사용하여 공간 차원 축소
+        x_cnn_pooled = F.adaptive_avg_pool2d(x_cnn, (self.pooling_size, self.pooling_size))
+        x_trans_pooled = F.adaptive_avg_pool2d(x_trans, (self.pooling_size, self.pooling_size))
+        
+        # (batch_size, channels, pooling_size, pooling_size) -> (batch_size, pooling_size*pooling_size, channels)
+        x_cnn_pooled = x_cnn_pooled.view(x_cnn_pooled.size(0), self.cnn_channels, -1).permute(0, 2, 1)
+        x_trans_pooled = x_trans_pooled.view(x_trans_pooled.size(0), self.channels, -1).permute(0, 2, 1)
+        
+        # Query, Key, Value 생성
+        query = self.to_query(x_cnn_pooled)
+        key = self.to_key(x_cnn_pooled)
+        value = self.to_value(x_trans_pooled)
+        
+        # Attention 연산 수행
+        attn_output, _ = self.attention(query, key, value) 
+        # attn_output의미 : 해당 채널의 중요도를 나타냄. query와 key의 내적을 통해 나온 값. 
+        # 그 후 value와 어떤 연산을
+        cnn_result = self.up_cnn(attn_output)
+
+        
+        
+        cnn_result = cnn_result.permute(0, 2, 1).view(x_cnn.size(0), self.cnn_channels, self.pooling_size, self.pooling_size)
+        transform_result = attn_output.permute(0, 2, 1).view(x_trans.size(0), self.channels, self.pooling_size, self.pooling_size)
+        
+        cnn_result = self.sigmoid(cnn_result)
+        transform_result = self.sigmoid(transform_result)
+        
         
         return cnn_result, transform_result
 
@@ -362,6 +432,7 @@ class Hybrid2(nn.Module):
         del resnet; del transformer_encoder
         
         #### Attention
+        
         self.lsra1 = LinearSRA(resnet_layer1_out_channels,transformer_layer1_out_channels)
         self.lsra2 = LinearSRA(resnet_layer2_out_channels,transformer_layer2_out_channels)
         self.lsra3 = LinearSRA(resnet_layer3_out_channels,transformer_layer3_out_channels)
@@ -412,8 +483,8 @@ class Hybrid2(nn.Module):
             visualize_feature_map(res1,trans1, 'before_layer1')        
         
         res1_att, trans1_att = self.lsra1(res1,trans1)
-        res1 = res1+res1_att
-        trans1 = trans1+trans1_att
+        res1 = res1*res1_att
+        trans1 = trans1*trans1_att
         
         res1_down = self.cnn_down1(res1)        
         if visualize:
@@ -423,8 +494,8 @@ class Hybrid2(nn.Module):
         trans2 = self.transformer_layer2(trans1) #44 64
         
         res2_att, trans2_att = self.lsra2(res2,trans2)
-        res2 = res2 + res2_att
-        trans2 = trans2 + trans2_att
+        res2 = res2*res2_att
+        trans2 = trans2*trans2_att
         
         res2_down = self.cnn_down2(res2)   
         
@@ -432,8 +503,8 @@ class Hybrid2(nn.Module):
         trans3 = self.transformer_layer3(trans2) #22 160     
         
         res3_att, trans3_att = self.lsra3(res3,trans3)
-        res3 = res3 + res3_att
-        trans3 = trans3 + trans3_att
+        res3 = res3*res3_att
+        trans3 = trans3*trans3_att
         
         res3_down = self.cnn_down3(res3)        
         
@@ -441,8 +512,8 @@ class Hybrid2(nn.Module):
         trans4 = self.transformer_layer4(trans3) #11 256
         
         res4_att, trans4_att = self.lsra4(res4,trans4)
-        res4 = res4 + res4_att
-        trans4 = trans4 + trans4_att
+        res4 = res4*res4_att
+        trans4 = trans4*trans4_att
         res4_down = self.cnn_down4(res4)
         #enc_transformer = self.transformer_encoder(x)
         #print(torch.cat((enc_cnn,enc_transformer),1).shape)
@@ -505,11 +576,13 @@ class Hybrid(nn.Module):
         
         
         
-        resnet = timm.create_model('resnet50', pretrained=True)
+        #resnet = timm.create_model('resnet50', pretrained=True)
+        resnet = timm.create_model('resnext50_32x4d', pretrained=True)
         #self.cnn_encoder = nn.Sequential(*list(self.cnn_encoder.children())[:-2]) # 2048,11,11
         
 
         # Split ResNet50 into separate blocks for skip connections
+        print(resnet)
         self.resnet_layer0 = nn.Sequential(*list(resnet.children())[:4])  # initial conv + bn + relu + maxpool
         self.resnet_layer1 = resnet.layer1  # first blockc
         self.resnet_layer2 = resnet.layer2  # second blok
@@ -663,7 +736,7 @@ class Hybrid(nn.Module):
         dec4_2 = torch.cat( (dec4_skip,unpool4), 1)   
         dec4_1 = self.dec4_1(dec4_2) 
         
-        unpool3 = F.interpolate(dec4_1, size=(trans2.shape[2],trans2.shape[3]), mode='bilinear', align_corners=True)        
+        unpool3 = F.interpolate(dec4_1, size=(trans2.shape[2],trans2.shape[3]), mode='bilinear', align_corners=True)
         dec3_skip = torch.cat( (res2_down,trans2),1)
         dec3_2 = self.dec3_2(torch.cat((dec3_skip,unpool3),1)) 
         dec3_1 = self.dec3_1(dec3_2)  
@@ -705,17 +778,19 @@ if __name__ == '__main__':
     
     img_path = "/ssd2/colono/data/TestDataset/CVC-300/images/149.png"
     
-    #img = torch.randn(1,3,352,352)
-    img = torchvision.io.read_image(img_path).unsqueeze(0).float() / 255.0 # 
+    img = torch.randn(1,3,352,352)
+    #img = torchvision.io.read_image(img_path).unsqueeze(0).float() / 255.0 # 
     
     sample_model = Hybrid()
-    sample_model.load_state_dict(torch.load('/ssd2/colono/checkpoint/hybrid_99.pth'))
+    sample_model.eval()
+    #sample_model.load_state_dict(torch.load('/ssd2/colono/checkpoint/hybrid_99.pth'))
     #sample_model = Hybrid2() 
+    #sample_model.load_state_dict(torch.load('/ssd2/colono/checkpoint/hybrid2_99.pth'))
     
     sample_img = F.interpolate(img, size=(352,352), mode='bilinear', align_corners=True)
     #sample_img = F.interpolate(img, scale_factor=1.0, mode='bilinear', align_corners=True)
 
-    sample_output = sample_model(sample_img[0].unsqueeze(0), visualize=True)
+    sample_output = sample_model(sample_img, visualize=False)
     print(sample_output.shape)    
         
         
